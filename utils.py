@@ -1,112 +1,10 @@
 import numpy as np
 import pandas as pd
+from matplotlib import ticker
 from scipy.spatial.distance import jensenshannon, cityblock
 from constants import *
+import matplotlib.pyplot as plt
 
-def calculate_distance(s, r, data_type=None):
-    s_np = np.array(s, dtype='float64')
-    s_np = s_np[s_np == s_np]
-    r_np = np.array(r, dtype='float64')
-    r_np = r_np[r_np == r_np]
-    # if data_type == NUMERIC_TYPE:
-    #     return 0 if len(r) == 0 else wasserstein_distance(r, s)
-    # else:
-    try:
-        return 0 if len(r_np) == 0 else jensenshannon(r_np, s_np)
-    except Exception:
-        return
-def calculate_tvd(s, r, data_type=None):
-    # s_np = np.array(s, dtype='float64')
-    # s_np = s_np[s_np == s_np]
-    # r_np = np.array(r, dtype='float64')
-    # r_np = r_np[r_np == r_np]
-
-    return 0.5 * cityblock(s, r)
-
-
-def distributions_distance(source_dist, result_dist, data_type=None):
-    distributions_pd = pd.concat([source_dist, result_dist], axis=1).fillna(0.0)
-    dist = calculate_distance(distributions_pd[source_dist.name], distributions_pd[result_dist.name], data_type)
-    return dist, distributions_pd[result_dist.name].fillna(0.0)
-
-def distributions_distance_tvd(source_dist, result_dist, data_type=None):
-    distributions_pd = pd.concat([source_dist, result_dist], axis=1).fillna(0.0)
-    dist = calculate_tvd(distributions_pd[source_dist.name], distributions_pd[result_dist.name], data_type)
-    return dist, distributions_pd[result_dist.name].fillna(0.0)
-
-def normalize_by_clusters_num(raw_score, num_clusters):
-    return (raw_score - 1.0 / num_clusters) / (1.0 - 1.0 / num_clusters)
-
-
-def determine_column_type(column_series):
-    if (column_series.dtype == 'string' or column_series.dtype == 'object') or (
-            len(column_series.drop_duplicates()) < 20):
-        return CATEGORICAL_TYPE
-    return NUMERIC_TYPE
-
-
-def equalObs(x, nbin):
-    nlen = len(x)
-    interp = np.interp(np.linspace(0, nlen, nbin + 1), np.arange(nlen), np.sort(x))
-    return np.unique(interp)
-
-
-def distributions_lift(source_dist, result_dist):
-    # print(f"source:\\n {source_dist}")
-    # print(f"result:\\n {result_dist}")
-    distributions_pd = pd.concat([source_dist, result_dist], axis=1).fillna(0.0)
-    return distributions_pd[result_dist.name] / distributions_pd[source_dist.name]
-
-
-def diversity_from_distributions(distributions_list):
-    diversity = 1
-    for i in range(1, len(distributions_list), 1):
-        min_distance = np.inf
-        for j in range(i):
-            distance = calculate_distance(distributions_list[i], distributions_list[j])
-            min_distance = distance if distance < min_distance else min_distance
-        diversity += min_distance
-    return diversity
-
-def diversity_from_distributions_tvd(distributions_list):
-    diversity = 1
-    for i in range(1, len(distributions_list), 1):
-        min_distance = np.inf
-        for j in range(i):
-            distance = calculate_tvd(distributions_list[i][:,1], distributions_list[j][:,1])
-            min_distance = distance if distance < min_distance else min_distance
-        diversity += min_distance
-    return diversity
-
-
-
-
-def bin_single_column(binning_column, type, data_type, num_bins=10, bins=None):
-    # data_type = self.source_distributions[binning_column.name][DATA_TYPE]
-    # type must be one of 'source', 'result'
-    if data_type == CATEGORICAL_TYPE:
-        histogram = binning_column.value_counts(normalize=True).rename(f"{binning_column.name}_{type}")
-        bins = list(histogram.index)
-        return histogram, bins
-    elif data_type == NUMERIC_TYPE:
-        if bins is None and num_bins is not None:
-            bins = equalObs(binning_column, num_bins)
-        counts, bin_edges = np.histogram(binning_column, bins=bins)
-        counts = counts / sum(counts)
-        bin_edges[len(bin_edges) - 1] = bin_edges[len(bin_edges) - 1] + 1  # patch to solve pd.cut problem last bin
-        return pd.Series(counts, index=bin_edges[:-1], name=f"{binning_column.name}_{type}"), bins
-    else:
-        raise Exception("incorrect data type")
-
-
-def best_from_list_by_order_type(lst, ordering_type):
-    assert ordering_type in ['best', 'worst', 'median']
-    if ordering_type == 'best':
-        return np.argmax(lst)
-    elif ordering_type == 'median':
-        return np.argsort(lst)[len(lst) // 2]
-    elif ordering_type == 'worst':
-        return np.argsort(lst)[0]
 
 def normalize_hist(hist):
     bins = hist['bins']
@@ -116,67 +14,63 @@ def normalize_hist(hist):
     return np.c_[bins, counts]
 
 
-def evaluate_sufficiency(hist_cohort, hist_all):
-    hist_cohort = pd.DataFrame(hist_cohort, columns=['bins', 'count'])
-    hist_all = pd.DataFrame(hist_all, columns=['bins', 'count'])
-    res = pd.merge(hist_all, hist_cohort, how='inner', on='bins', suffixes=('_d', '_c'))
-    res['score'] = res['count_c'] ** 2 / res['count_d']
-    suff = (res['score'].sum()) / (hist_all['count'].sum())
-    return suff
+def plot_explanation(explanation):
 
-def evaluate_sufficiency(hist_cohort, hist_all):
-    hist_cohort = pd.DataFrame(hist_cohort, columns=['bins', 'count'])
-    hist_all = pd.DataFrame(hist_all, columns=['bins', 'count'])
-    res = pd.merge(hist_all, hist_cohort, how='outer', on='bins', suffixes=('_d', '_c')).fillna(0.0)
+    data = []
+    for c, attr, hist_all, hist_cluster in explanation:
+        hist_rest = hist_all.copy()
+        no_clust_label = 'Rest'
+        hist_rest['counts'] = hist_rest['counts'] - hist_cluster['counts']
+        hist_rest.loc[hist_rest['counts'] <= 0, 'counts'] = 0
+        hist_rest = normalize_hist(hist_rest)
+        hist_cluster = normalize_hist(hist_cluster)
+        ylabel = 'frequency (%)'
 
-    res['count_c'] = res[['count_d','count_c']].min(axis=1) # Make sure no infs
+        hist_rest = pd.DataFrame(hist_rest, columns=[attr, no_clust_label])
+        hist_cluster = pd.DataFrame(hist_cluster, columns=[attr, f'Cluster {c}'])
+        plot_df = pd.merge(hist_rest, hist_cluster)
+        plot_df = plot_df[plot_df[no_clust_label] + plot_df[f'Cluster {c}'] > 3]
+        # print(plot_df)
+        data.append({
+            'plot_df': plot_df,
+            'no_clust_label': no_clust_label,
+            # 'cluster_label': f'Cluster {c + 1}',
+            'cluster_label': f'Cluster {c}',
+            'ylabel': ylabel,
+            'attr': attr
+        })
+    fig = plt.figure(figsize=(12, 2.3))
+    plt.subplots_adjust(hspace=0.25, wspace=0.25)
+    axs = fig.subplots(nrows=1, ncols=len(explanation))
 
-    res['score'] = res['count_c'] ** 2 / res['count_d']
-    score = res['score'].sum()
-    cnt = hist_cohort['count'].sum()
-    if cnt == 0.0 or np.isnan(cnt):
-        return 0.0
-    return score / cnt
+    axs = axs.flatten()
+    j = 0
+    for ax, dat in zip(axs, data):
+        plot_df = dat['plot_df']
+        bar_width = 0.43  # Adjust bar width
+        r1 = np.arange(len(plot_df[dat['attr']]))
+        r2 = [x + bar_width for x in r1]
 
-def evaluate_sufficiency2(hist_cohort, hist_all):
-    hist_cohort = pd.DataFrame(hist_cohort, columns=['bins', 'count'])
-    hist_all = pd.DataFrame(hist_all, columns=['bins', 'count'])
-    res = pd.merge(hist_all, hist_cohort, how='inner', on='bins', suffixes=('_d', '_c'))
-    sum_c = (res['count_c'] * res['count_d']).sum()
-    sum_d = (res['count_d'] ** 2).sum()
+        ax.bar(r2, plot_df[dat['cluster_label']], width=bar_width, edgecolor='grey', label=dat['cluster_label'],
+               color='#5573CD')
+        ax.bar(r1, plot_df[dat['no_clust_label']], width=bar_width, edgecolor='grey', label=dat['no_clust_label'],
+               color='#CD5573')
 
-    return sum_c / sum_d
+        ax.set_xlabel(f"'{dat['attr']}'", fontsize=13.5, labelpad=10)  # Increase font size
+        ax.set_xticks([r + bar_width / 2 for r in r1])
+        rotate = 90
 
-def evaluate_sufficiency3(explained_col, cluster_id, clustered_dataset, hist_cohort, hist_all):
-    hist_cohort = pd.DataFrame(normalize_hist(hist_cohort), columns=['bins', 'count'])
-    hist_all = pd.DataFrame(normalize_hist(hist_all), columns=['bins', 'count'])
-    res = pd.merge(hist_all, hist_cohort, how='outer', on='bins', suffixes=('_d', '_c')).fillna(0.0)
-    res[PROBA_COL] = res['count_c'] / res['count_d']
-    explained_lift = res[['bins', PROBA_COL]]
-    binned_explained_col = explained_col + BINNED_SUFFIX
-    clustered_dataset.loc[:, binned_explained_col] = clustered_dataset[explained_col]
-    binned_proba_df = explained_lift.rename(
-      columns={'bins': binned_explained_col})
-    clustered_dataset_with_proba = clustered_dataset.merge(binned_proba_df, on=binned_explained_col, how='left')
-    clustered_dataset.drop(columns=[binned_explained_col], inplace=True)
-    full_dataset_proba_sum = clustered_dataset_with_proba[PROBA_COL].sum()
-    cluster_proba_sum = clustered_dataset_with_proba[clustered_dataset_with_proba[CLUSTER] == cluster_id][
-      PROBA_COL].sum()
-    if cluster_proba_sum == 0:
-        return 0.0
-    return cluster_proba_sum / full_dataset_proba_sum
+        ax.set_xticklabels(plot_df[dat['attr']], rotation=rotate, ha='center')  # Rotate and align text
 
-
-def evaluate_interest(hist_cohort, hist_all):
-    hist_cohort = pd.DataFrame(hist_cohort, columns=['bins', 'count'])
-    hist_all = pd.DataFrame(hist_all, columns=['bins', 'count'])
-    res = pd.merge(hist_all, hist_cohort, how='left', on='bins', suffixes=('_d', '_c')).fillna(0)
-    cohort_size = (hist_cohort['count']).sum()
-    dataset_size = (hist_all['count']).sum()
-
-    res['score'] = abs(res['count_c'] / cohort_size - res['count_d'] / dataset_size)
-    inter = 0.5 * res['score'].sum()
-    return inter
-
-
-
+        ax.tick_params(axis='both', which='major', labelsize=14)  # Increase font size
+        ax.tick_params(axis='x', which='major', pad=2.5, labelsize=12)
+        if j == 0:
+            ax.set_ylabel(dat['ylabel'], fontsize=13.5, labelpad=10)  # Increase font size
+        ax.yaxis.set_major_locator(ticker.MultipleLocator(base=25))
+        ax.grid(True, which='major', linestyle='--', linewidth=0.5, color='gray', axis='y')
+        # ax.legend(fontsize=20)  # Increase legend font size
+        ax.legend(loc='best', fontsize=11, framealpha=0.5)
+        ax.yaxis.set_major_locator(ticker.MultipleLocator(base=10))
+        j += 1
+    # plt.tight_layout()
+    plt.show()
