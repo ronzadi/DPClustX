@@ -1,7 +1,6 @@
 import itertools
 import math
 
-# import numpy as np
 # import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
@@ -17,7 +16,7 @@ from one_shot_topk import noisy_topk
 
 class ClusteringExplainer:
     def __init__(self, dataset, domains=None, clusters_ids=None, interest_weight=1/3, suff_weight=1/3, diversity_weight=1/3,
-                 cluster_col_name='cluster', random_state=None, num_candidates=3, scores_cache=None, mode=ADMIN):
+                 cluster_col_name=CLUSTER, random_state=None, num_candidates=3, scores_cache=None, mode=ADMIN):
 
         self.dataset = dataset.copy()
         self.random_state = random_state
@@ -35,7 +34,6 @@ class ClusteringExplainer:
         self._scores_cache = scores_cache or self.init_cache()
         self._global_score = None
         self.top_comb = None
-        self.cluster_sizes = self.get_cluster_sizes()
         self.dataset_histograms = None
         self.cluster_histograms = None
         self.get_dataset_histograms()
@@ -81,10 +79,10 @@ class ClusteringExplainer:
 
     def get_clusters_ids(self, cluster_ids):
         if cluster_ids is None:
-            # warnings.warn("Cluster ids not provided. Using cluster ids from input dataset.")
+            warnings.warn("Cluster Ids not provided. Using Cluster Ids of input dataset, which may result in privacy "
+                          "leakage.")
             cluster_ids = np.unique(self.clusters)
         return cluster_ids
-
 
     def sufficiency(self, attribute, cluster_id, normalize=False):
 
@@ -133,14 +131,13 @@ class ClusteringExplainer:
         counts_1 = self.cluster_histograms[cluster_1][attr_1]
         counts_2 = self.cluster_histograms[cluster_2][attr_2]
         res = pd.merge(counts_1, counts_2, how='outer', on='bins', suffixes=('_1', '_2')).fillna(0)
-        res['score'] = abs(res['counts_1'] / max(s_1, 1) - res['counts_2'] / max(s_2,1))
+        res['score'] = abs(res['counts_1'] / max(s_1, 1) - res['counts_2'] / max(s_2, 1))
         diversity = minsize * 0.5 * res['score'].sum()
 
         self._scores_cache[DIVERS][normalize][sym_pair] = self._scores_cache[DIVERS][normalize][
             pair] = diversity
 
         return diversity
-
 
     def get_attr_diversity(self, attr, attr_combination, normalize):
 
@@ -403,125 +400,12 @@ class ClusteringExplainer:
     def explain(self, eps_candlist=None, eps_topcomb=None, eps_hist=None, exclude=None):
 
         if self.mode == USER:
-            self.explain_user(eps_candlist, eps_topcomb, eps_hist, exclude)
+            return self.explain_user(eps_candlist, eps_topcomb, eps_hist, exclude)
         elif self.mode == ADMIN:
-            self.explain_admin(eps_candlist, eps_topcomb, eps_hist, exclude)
+            return self.explain_admin(eps_candlist, eps_topcomb, eps_hist, exclude)
 
     def show_explanation(self):
         utils.plot_explanation(self.global_explanation)
-
-    # def explain1(self, eps_hist=0.1,  private=True):
-    #
-    #     text_desctiptions1 = {
-    #         1: " $\\mathbf{'Age'}$ values below $49$ are $13$ times more frequent in Cluster 1 "
-    #            "($76\\%$) than in the remaining data ($6\\%$).",
-    #         2: " $\\mathbf{'Age'}$ values above $60$ are $7$ times more frequent in Cluster 2 "
-    #            "($82\\%$) than in the remaining data ($12\\%$).",
-    #         3: " $\\mathbf{'Income'}$ values below $25K$ are $8$ times more frequent in Cluster 3 "
-    #            "($85\\%$) than in the remaining data ($11\\%$)."
-    #     }
-    #
-    #     data = []
-    #
-    #     explanation = self.gen_noisy_hists(('Age', 'Age', 'Income'), eps_hist, private)
-    #     # Generate data and store it in the list
-    #     for c, attr, hist_all, hist_cluster in explanation:
-    #         no_clust_label = 'Dataset'
-    #         ylabel = 'Count'
-    #         hist_rest = hist_all.copy()
-    #         if True:
-    #             no_clust_label = 'Rest'
-    #             hist_rest['counts'] = hist_rest['counts'] - hist_cluster['counts']
-    #             hist_rest.loc[hist_rest['counts'] <= 0, 'counts'] = 0
-    #         if True:
-    #             hist_rest = normalize_hist(hist_rest)
-    #             hist_cluster = normalize_hist(hist_cluster)
-    #             ylabel = 'frequency (%)'
-    #
-    #         hist_rest = pd.DataFrame(hist_rest, columns=[attr, no_clust_label])
-    #         hist_cluster = pd.DataFrame(hist_cluster, columns=[attr, f'Cluster {c + 1}'])
-    #         plot_df = pd.merge(hist_rest, hist_cluster)
-    #         plot_df = plot_df[plot_df[no_clust_label] + plot_df[f'Cluster {c + 1}'] > 3]
-    #         # print(plot_df)
-    #         # Store the data and labels
-    #         data.append({
-    #             'plot_df': plot_df,
-    #             'no_clust_label': no_clust_label,
-    #             'cluster_label': f'Cluster {c + 1}',
-    #             'ylabel': ylabel,
-    #             'attr': attr
-    #         })
-    #     # fig = plt.figure(figsize=(20, 6.2)) # For opt
-    #     fig = plt.figure(figsize=(12, 2.3))  # For DP
-    #     plt.subplots_adjust(hspace=0.25, wspace=0.25)
-    #     # create 3x1 subfigs
-    #
-    #     axs = fig.subplots(nrows=1, ncols=len(explanation))
-    #
-    #     axs = axs.flatten()
-    #     j = 0
-    #     for ax, dat in zip(axs, data):
-    #         plot_df = dat['plot_df']
-    #         bar_width = 0.43  # Adjust bar width
-    #         r1 = np.arange(len(plot_df[dat['attr']]))
-    #         r2 = [x + bar_width for x in r1]
-    #
-    #         ax.bar(r2, plot_df[dat['cluster_label']], width=bar_width, edgecolor='grey', label=dat['cluster_label'],
-    #                color='#5573CD')
-    #         ax.bar(r1, plot_df[dat['no_clust_label']], width=bar_width, edgecolor='grey', label=dat['no_clust_label'],
-    #                color='#CD5573')
-    #
-    #         ax.set_xlabel(f"'{dat['attr']}'", fontsize=13.5, labelpad=10)  # Increase font size
-    #         ax.set_xticks([r + bar_width / 2 for r in r1])
-    #         if dat['attr'] == 'GenHlth':
-    #             rotate = 45
-    #         elif dat['attr'] == 'Age':
-    #             rotate = 90
-    #         else:
-    #             rotate = 90
-    #
-    #         ax.set_xticklabels(plot_df[dat['attr']], rotation=rotate, ha='center')  # Rotate and align text
-    #
-    #         if dat['attr'] == 'GenHlth':
-    #             ax.set_xticklabels(['Excellent', 'Very good', 'Good', 'Fair', 'Poor'])
-    #
-    #         ax.tick_params(axis='both', which='major', labelsize=14)  # Increase font size
-    #         ax.tick_params(axis='x', which='major', pad=2.5, labelsize=12)
-    #         if j == 0:
-    #             ax.set_ylabel(dat['ylabel'], fontsize=13.5, labelpad=10)  # Increase font size
-    #         ax.yaxis.set_major_locator(ticker.MultipleLocator(base=25))
-    #         ax.grid(True, which='major', linestyle='--', linewidth=0.5, color='gray', axis='y')
-    #         # ax.legend(fontsize=20)  # Increase legend font size
-    #
-    #         if j == 2:
-    #             ax.legend(loc='best', fontsize=11, framealpha=0.5)
-    #             ax.yaxis.set_major_locator(ticker.MultipleLocator(base=10))
-    #             # ax.legend(loc='best',fontsize=8, framealpha=0.5)
-    #             # ax.legend(fontsize=22)
-    #         else:
-    #             ax.legend(loc='upper left', fontsize=11, framealpha=0.5)
-    #             # ax.legend(fontsize=26, framealpha=0.7)
-    #         if dat['attr'] == 'Age':
-    #             ax.yaxis.set_major_locator(ticker.MultipleLocator(base=10))
-    #
-    #         wrapped = wrap_text(text_desctiptions1[j + 1], 31)
-    #         ax.text(
-    #             0.5, 1.35, wrapped,  # x, y position (relative to the axes)
-    #             transform=ax.transAxes,  # Use axis coordinates for positioning
-    #             fontsize=12,
-    #             ha='center',  # Horizontal alignment
-    #             va='center',  # Vertical alignment
-    #             # bbox=dict(boxstyle="round,pad=0.3", edgecolor='black', facecolor='white')  # Bounding box style
-    #         )
-    #         j += 1
-    #     # plt.tight_layout()
-    #     plt.show()
-
-
-
-
-
-
 
 
 
